@@ -36,6 +36,12 @@ interface HistoryItem {
   timestamp: number;
 }
 
+interface BatchResult {
+  style: string;
+  label: string;
+  output: string;
+}
+
 export default function Home() {
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
@@ -48,6 +54,9 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [selectedBatchResult, setSelectedBatchResult] = useState<string | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem("threadflow_usage");
@@ -94,6 +103,8 @@ export default function Home() {
 
     setIsLoading(true);
     setError("");
+    setBatchResults([]);
+    setSelectedBatchResult(null);
 
     try {
       const style = STYLES.find((s) => s.id === selectedStyle);
@@ -158,6 +169,106 @@ export default function Home() {
     }
   };
 
+  const handleBatchRewrite = async () => {
+    if (!input.trim()) {
+      setError("Please enter some text to rewrite");
+      return;
+    }
+    if (isOverLimit) {
+      setError(`Text exceeds ${MAX_CHARS} characters`);
+      return;
+    }
+    if (!apiKey) {
+      setError("Please set your Anthropic API key in settings");
+      setShowSettings(true);
+      return;
+    }
+
+    setBatchLoading(true);
+    setError("");
+    setBatchResults([]);
+    setSelectedBatchResult(null);
+    setOutput("");
+
+    try {
+      // Rewrite in all styles
+      const promises = STYLES.map(async (style) => {
+        const response = await fetch(ANTHROPIC_API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: "claude-3-haiku-20240307",
+            max_tokens: 1024,
+            system: `You are an expert Twitter/X content creator. Rewrite tweets and threads in different styles while preserving the core message. Keep it engaging, within character limits, and match the requested style perfectly.`,
+            messages: [
+              {
+                role: "user",
+                content: `Rewrite the following tweet/thread in a ${style.label} style:\n\n${input}`,
+              },
+            ],
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error?.message || "Failed to rewrite");
+        }
+
+        const data = await response.json();
+        const content = data.content;
+        let result = "";
+        if (Array.isArray(content)) {
+          const textBlock = content.find((c: any) => c.type === "text");
+          result = textBlock?.text || "";
+        } else if (typeof content === "string") {
+          result = content;
+        }
+
+        return {
+          style: style.id,
+          label: style.label,
+          output: result,
+        };
+      });
+
+      const results = await Promise.all(promises);
+      setBatchResults(results);
+
+      // Update usage count (5 rewrites = 5 uses)
+      const newCount = usageCount + STYLES.length;
+      setUsageCount(newCount);
+      localStorage.setItem("threadflow_usage", newCount.toString());
+
+      // Save each to history
+      const historyItems: HistoryItem[] = results.map((r, idx) => ({
+        id: (Date.now() + idx).toString(),
+        input: input,
+        output: r.output,
+        style: r.style,
+        timestamp: Date.now(),
+      }));
+      const newHistory = [...historyItems, ...history].slice(0, 10);
+      setHistory(newHistory);
+      localStorage.setItem("threadflow_history", JSON.stringify(newHistory));
+    } catch (err: any) {
+      setError(err.message || "Failed to rewrite. Please try again.");
+      console.error(err);
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleSelectBatchResult = (result: BatchResult) => {
+    setSelectedBatchResult(result.style);
+    setOutput(result.output);
+    setSelectedStyle(result.style);
+    setBatchResults([]); // Clear batch results to show single output view
+  };
+
   const handleCopy = async () => {
     if (!output) return;
     await navigator.clipboard.writeText(output);
@@ -176,6 +287,8 @@ export default function Home() {
     setInput("");
     setOutput("");
     setError("");
+    setBatchResults([]);
+    setSelectedBatchResult(null);
   };
 
   const handleFeedback = () => {
@@ -327,23 +440,42 @@ export default function Home() {
               <span className={isOverLimit ? "text-red-400" : "text-zinc-500"}>
                 {charCount.toLocaleString()} / {MAX_CHARS.toLocaleString()} characters
               </span>
-              <button
-                onClick={handleRewrite}
-                disabled={isLoading || isOverLimit || !input.trim()}
-                className="px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-zinc-700 disabled:to-zinc-700 disabled:cursor-not-allowed text-white font-medium rounded-full transition-all shadow-lg shadow-blue-600/25 hover:shadow-blue-600/40"
-              >
-                {isLoading ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Rewriting...
-                  </span>
-                ) : (
-                  "✨ Rewrite"
-                )}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleBatchRewrite}
+                  disabled={batchLoading || isOverLimit || !input.trim()}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 disabled:from-zinc-700 disabled:to-zinc-700 disabled:cursor-not-allowed text-white font-medium rounded-full transition-all shadow-lg shadow-purple-600/25 hover:shadow-purple-600/40"
+                >
+                  {batchLoading ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Generating...
+                    </span>
+                  ) : (
+                    "🎨 All Styles"
+                  )}
+                </button>
+                <button
+                  onClick={handleRewrite}
+                  disabled={isLoading || isOverLimit || !input.trim()}
+                  className="px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-zinc-700 disabled:to-zinc-700 disabled:cursor-not-allowed text-white font-medium rounded-full transition-all shadow-lg shadow-blue-600/25 hover:shadow-blue-600/40"
+                >
+                  {isLoading ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Rewriting...
+                    </span>
+                  ) : (
+                    "✨ Rewrite"
+                  )}
+                </button>
+              </div>
             </div>
             {error && (
               <p className="text-red-400 text-sm">{error}</p>
@@ -353,12 +485,38 @@ export default function Home() {
           {/* Output Panel */}
           <div className="space-y-3">
             <label className="text-sm font-medium text-zinc-400">
-              Rewritten result
+              {batchResults.length > 0 ? "Choose your favorite style" : "Rewritten result"}
             </label>
-            <div className={`relative h-80 rounded-xl border-2 transition-colors ${
-              output ? "border-green-600/50 bg-zinc-900/50" : "border-zinc-800 border-dashed bg-zinc-900/30"
+            <div className={`relative rounded-xl border-2 transition-colors ${
+              output || batchResults.length > 0 ? "border-green-600/50 bg-zinc-900/50" : "border-zinc-800 border-dashed bg-zinc-900/30"
             }`}>
-              {output ? (
+              {batchResults.length > 0 ? (
+                <div className="h-80 overflow-y-auto p-3 space-y-2">
+                  {batchResults.map((result) => (
+                    <button
+                      key={result.style}
+                      onClick={() => handleSelectBatchResult(result)}
+                      className={`w-full text-left p-3 rounded-lg border transition-all ${
+                        selectedBatchResult === result.style
+                          ? "border-blue-500 bg-blue-600/20"
+                          : "border-zinc-700 bg-zinc-800/30 hover:border-zinc-600 hover:bg-zinc-800/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-blue-400">
+                          {STYLES.find(s => s.id === result.style)?.emoji} {result.label}
+                        </span>
+                        <span className={`text-xs ${result.output.length > 280 ? "text-amber-400" : "text-zinc-500"}`}>
+                          {result.output.length} chars
+                        </span>
+                      </div>
+                      <p className="text-sm text-zinc-300 line-clamp-3">
+                        {result.output}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              ) : output ? (
                 <>
                   <textarea
                     readOnly
