@@ -10,8 +10,31 @@ const STYLES = [
   { id: "story", label: "Story", emoji: "📖" },
 ];
 
+const SAMPLE_INPUTS = [
+  {
+    label: "Product Launch",
+    text: "Excited to announce our new AI tool! It's been months in the making. Check it out and let us know what you think.",
+  },
+  {
+    label: "Hot Take",
+    text: "Most startups fail not because of bad product, but because they give up too early. Persistence is everything.",
+  },
+  {
+    label: "Thread Starter",
+    text: "Here's what I learned from building in public for 30 days: 1) Ship early, 2) Talk to users daily, 3) Iterate fast.",
+  },
+];
+
 const MAX_CHARS = 2800;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+
+interface HistoryItem {
+  id: string;
+  input: string;
+  output: string;
+  style: string;
+  timestamp: number;
+}
 
 export default function Home() {
   const [input, setInput] = useState("");
@@ -23,6 +46,8 @@ export default function Home() {
   const [usageCount, setUsageCount] = useState(0);
   const [apiKey, setApiKey] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("threadflow_usage");
@@ -32,6 +57,14 @@ export default function Home() {
     const savedKey = localStorage.getItem("threadflow_api_key");
     if (savedKey) {
       setApiKey(savedKey);
+    }
+    const savedHistory = localStorage.getItem("threadflow_history");
+    if (savedHistory) {
+      try {
+        setHistory(JSON.parse(savedHistory));
+      } catch (e) {
+        console.error("Failed to parse history", e);
+      }
     }
   }, []);
 
@@ -105,6 +138,18 @@ export default function Home() {
       const newCount = usageCount + 1;
       setUsageCount(newCount);
       localStorage.setItem("threadflow_usage", newCount.toString());
+
+      // Save to history
+      const historyItem: HistoryItem = {
+        id: Date.now().toString(),
+        input: input,
+        output: result,
+        style: selectedStyle,
+        timestamp: Date.now(),
+      };
+      const newHistory = [historyItem, ...history].slice(0, 10);
+      setHistory(newHistory);
+      localStorage.setItem("threadflow_history", JSON.stringify(newHistory));
     } catch (err: any) {
       setError(err.message || "Failed to rewrite. Please try again.");
       console.error(err);
@@ -133,6 +178,44 @@ export default function Home() {
     setError("");
   };
 
+  const handleFeedback = () => {
+    const subject = encodeURIComponent("ThreadFlow Feedback");
+    const body = encodeURIComponent(`Hi! I used ThreadFlow and wanted to share my feedback:\n\n[Your feedback here]\n\n---\nMy experience: [first time user / returning user]\nWould I miss it if it was gone? [Yes/No]`);
+    window.open(`mailto:opesli@email.com?subject=${subject}&body=${body}`, "_blank");
+  };
+
+  const handleUseSample = (text: string) => {
+    setInput(text);
+    setOutput("");
+    setError("");
+  };
+
+  const loadFromHistory = (item: HistoryItem) => {
+    setInput(item.input);
+    setOutput(item.output);
+    setSelectedStyle(item.style);
+    setShowHistory(false);
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    localStorage.removeItem("threadflow_history");
+  };
+
+  const formatTimestamp = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return "Just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans">
       {/* Header */}
@@ -152,6 +235,20 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              title="History"
+            >
+              📜
+            </button>
+            <button
+              onClick={handleFeedback}
+              className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              title="Send Feedback"
+            >
+              💬
+            </button>
             <button
               onClick={() => setShowSettings(!showSettings)}
               className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
@@ -213,6 +310,19 @@ export default function Home() {
               placeholder="Paste your tweet or thread here..."
               className="w-full h-80 bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 resize-none font-mono text-sm"
             />
+            {/* Sample Inputs */}
+            <div className="flex flex-wrap gap-2">
+              <span className="text-xs text-zinc-500">Try:</span>
+              {SAMPLE_INPUTS.map((sample, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleUseSample(sample.text)}
+                  className="text-xs px-2 py-1 rounded-md bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-300 transition-colors"
+                >
+                  {sample.label}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center justify-between text-sm">
               <span className={isOverLimit ? "text-red-400" : "text-zinc-500"}>
                 {charCount.toLocaleString()} / {MAX_CHARS.toLocaleString()} characters
@@ -348,6 +458,58 @@ export default function Home() {
                   </a>
                 </p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* History Panel */}
+        {showHistory && (
+          <div className="fixed inset-y-0 right-0 w-80 bg-zinc-900 border-l border-zinc-800 z-50 transform transition-transform overflow-y-auto">
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-zinc-100">History</h3>
+                <div className="flex gap-2">
+                  {history.length > 0 && (
+                    <button
+                      onClick={clearHistory}
+                      className="text-xs text-red-400 hover:text-red-300"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowHistory(false)}
+                    className="text-zinc-400 hover:text-zinc-200"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              {history.length === 0 ? (
+                <p className="text-sm text-zinc-500">No history yet</p>
+              ) : (
+                <div className="space-y-3">
+                  {history.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => loadFromHistory(item)}
+                      className="w-full text-left p-3 rounded-lg bg-zinc-800/50 hover:bg-zinc-800 transition-colors"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-blue-400">
+                          {STYLES.find(s => s.id === item.style)?.label || item.style}
+                        </span>
+                        <span className="text-xs text-zinc-500">
+                          {formatTimestamp(item.timestamp)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-400 line-clamp-2">
+                        {item.output}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
