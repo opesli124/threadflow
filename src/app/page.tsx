@@ -349,6 +349,16 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-4">
             <button
+              onClick={() => {
+                const text = encodeURIComponent("Make your tweets go viral! 🎯 Just tried @ThreadFlow AI - turns boring tweets into engaging, viral-ready content. Highly recommended! https://opesli124.github.io/threadflow/");
+                window.open(`https://twitter.com/intent/tweet?text=${text}`, "_blank");
+              }}
+              className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              title="Share ThreadFlow"
+            >
+              🐦
+            </button>
+            <button
               onClick={() => setShowHistory(!showHistory)}
               className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
               title="History"
