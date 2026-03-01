@@ -11,6 +11,7 @@ const STYLES = [
 ];
 
 const MAX_CHARS = 2800;
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
 export default function Home() {
   const [input, setInput] = useState("");
@@ -20,13 +21,25 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [usageCount, setUsageCount] = useState(0);
+  const [apiKey, setApiKey] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("threadflow_usage");
     if (saved) {
       setUsageCount(parseInt(saved, 10));
     }
+    const savedKey = localStorage.getItem("threadflow_api_key");
+    if (savedKey) {
+      setApiKey(savedKey);
+    }
   }, []);
+
+  const saveApiKey = (key: string) => {
+    setApiKey(key);
+    localStorage.setItem("threadflow_api_key", key);
+    setShowSettings(false);
+  };
 
   const charCount = input.length;
   const isOverLimit = charCount > MAX_CHARS;
@@ -40,34 +53,60 @@ export default function Home() {
       setError(`Text exceeds ${MAX_CHARS} characters`);
       return;
     }
+    if (!apiKey) {
+      setError("Please set your Anthropic API key in settings");
+      setShowSettings(true);
+      return;
+    }
 
     setIsLoading(true);
     setError("");
 
     try {
       const style = STYLES.find((s) => s.id === selectedStyle);
-      const response = await fetch("/api/rewrite", {
+      const response = await fetch(ANTHROPIC_API_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
         body: JSON.stringify({
-          text: input,
-          style: style?.label || "Professional",
+          model: "claude-3-haiku-20240307",
+          max_tokens: 1024,
+          system: `You are an expert Twitter/X content creator. Rewrite tweets and threads in different styles while preserving the core message. Keep it engaging, within character limits, and match the requested style perfectly.`,
+          messages: [
+            {
+              role: "user",
+              content: `Rewrite the following tweet/thread in a ${style?.label || "Professional"} style:\n\n${input}`,
+            },
+          ],
         }),
       });
 
       if (!response.ok) {
-        throw new Error("Failed to rewrite");
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || "Failed to rewrite");
       }
 
       const data = await response.json();
-      setOutput(data.result);
+      const content = data.content;
+      let result = "";
+      if (Array.isArray(content)) {
+        const textBlock = content.find((c: any) => c.type === "text");
+        result = textBlock?.text || "";
+      } else if (typeof content === "string") {
+        result = content;
+      }
+
+      setOutput(result);
 
       // Update usage count
       const newCount = usageCount + 1;
       setUsageCount(newCount);
       localStorage.setItem("threadflow_usage", newCount.toString());
-    } catch (err) {
-      setError("Failed to rewrite. Please try again.");
+    } catch (err: any) {
+      setError(err.message || "Failed to rewrite. Please try again.");
       console.error(err);
     } finally {
       setIsLoading(false);
@@ -105,10 +144,19 @@ export default function Home() {
               <p className="text-xs text-zinc-500">AI Tweet Rewriter</p>
             </div>
           </div>
-          <div className="text-sm text-zinc-500">
-            <span className={usageCount >= 5 ? "text-amber-400" : ""}>
-              {usageCount}/5 free rewrites
-            </span>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              title="API Settings"
+            >
+              ⚙️
+            </button>
+            <div className="text-sm text-zinc-500">
+              <span className={usageCount >= 5 ? "text-amber-400" : ""}>
+                {usageCount}/5 free rewrites
+              </span>
+            </div>
           </div>
         </div>
       </header>
@@ -238,6 +286,58 @@ export default function Home() {
         <footer className="mt-12 pt-6 border-t border-zinc-800 text-center text-zinc-500 text-sm">
           <p>Powered by Claude AI • Made for creators</p>
         </footer>
+
+        {/* Settings Modal */}
+        {showSettings && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-md w-full mx-4">
+              <h3 className="text-lg font-bold text-zinc-100 mb-4">API Settings</h3>
+              <p className="text-sm text-zinc-400 mb-4">
+                ThreadFlow uses your Anthropic API key to generate content.
+                Your key is stored locally and never sent to our servers.
+              </p>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-zinc-400 mb-2">
+                    Anthropic API Key
+                  </label>
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-ant-..."
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-600"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => saveApiKey(apiKey)}
+                    className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setShowSettings(false)}
+                    className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 font-medium rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p className="text-xs text-zinc-500">
+                  Get your API key from{" "}
+                  <a
+                    href="https://console.anthropic.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 hover:underline"
+                  >
+                    Anthropic Console
+                  </a>
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
