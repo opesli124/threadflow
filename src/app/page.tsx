@@ -120,6 +120,13 @@ export default function Home() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleShareToTwitter = () => {
+    if (!output) return;
+    const text = encodeURIComponent(output);
+    const twitterUrl = `https://twitter.com/intent/tweet?text=${text}`;
+    window.open(twitterUrl, "_blank");
+  };
+
   const handleClear = () => {
     setInput("");
     setOutput("");
@@ -248,7 +255,13 @@ export default function Home() {
                     value={output}
                     className="w-full h-full bg-transparent p-4 text-zinc-100 resize-none font-mono text-sm focus:outline-none"
                   />
-                  <div className="absolute bottom-3 right-3">
+                  <div className="absolute bottom-3 right-3 flex gap-2">
+                    <button
+                      onClick={handleShareToTwitter}
+                      className="px-4 py-2 rounded-full text-sm font-medium transition-all bg-black hover:bg-zinc-800 text-white border border-zinc-700"
+                    >
+                      🐦 Share
+                    </button>
                     <button
                       onClick={handleCopy}
                       className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
